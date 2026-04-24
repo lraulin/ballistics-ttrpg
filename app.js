@@ -1,19 +1,21 @@
 import {
-  thetaMoa, rangeFactor, angularVelocity, targetMovementMultiplier,
+  thetaMoa, angularVelocity, targetMovementMultiplier,
   finalChance, clamp, skillBand,
   distanceToYd, sizeToIn, speedToYps, ydToDisplay, inToDisplay,
 } from "./calc.js";
+import { rollD100, tightnessForShotType } from "./dice.js";
 import {
-  rollD100, sampleDeviationDice, sampleDeviationNormal, tightnessForShotType,
-} from "./dice.js";
-import {
-  BUILTIN_WEAPONS, getAllWeapons, addCustomWeapon, findWeapon, removeCustomWeapon,
+  BUILTIN_WEAPONS, getAllWeapons, addCustomWeapon, findWeapon,
 } from "./presets.js";
 import { loadState, saveState } from "./storage.js";
+import {
+  loadSilhouette, getSilhouette, monteCarloRF, sampleImpactForOutcome, POA_PRESETS,
+} from "./silhouette.js";
+
+const SILHOUETTE_URL = "./assets/06wi_yzok_190916.jpg";
 
 // ---- DOM ----
 const $ = (sel) => document.querySelector(sel);
-const form = $("#calc-form");
 
 const els = {
   unit: $("#unit-system"),
@@ -34,9 +36,19 @@ const els = {
   dispOut: $("#disp-out"),
 
   distance: $("#distance"),
-  targetSize: $("#target-size"),
+  figureHeight: $("#figure-height"),
+  widthScale: $("#width-scale"),
+  widthOut: $("#width-out"),
+  poaPreset: $("#poa-preset"),
+
+  silhouetteStage: $("#silhouette-stage"),
+  silhouetteImg: $("#silhouette-img"),
+  silhouetteOverlay: $("#silhouette-overlay"),
+  poaMarker: $("#poa-marker"),
+  impactDots: $("#impact-dots"),
+  impactLast: $("#impact-last"),
+
   thetaOut: $("#theta-out"),
-  ratioOut: $("#ratio-out"),
   rfOut: $("#rf-out"),
 
   aimSlider: $("#aim-slider"),
@@ -61,13 +73,7 @@ const els = {
   breakdown: $("#breakdown"),
   rollBtn: $("#roll-btn"),
   rollResult: $("#roll-result"),
-
-  impactMethod: $("#impact-method"),
-  deviateBtn: $("#deviate-btn"),
-  impactDots: $("#impact-dots"),
-  impactLast: $("#impact-last"),
   impactReadout: $("#impact-readout"),
-  impactPanel: $("#impact-panel"),
 };
 
 // ---- State ----
@@ -76,12 +82,14 @@ const defaultState = {
   skill: 0.55,
   platform: 1.0,
   weaponId: "carbine",
-  distance: 50,          // yards
-  targetSize: 20,        // inches
+  distance: 50,          // yards (internal)
+  figureHeight: 70,      // inches (internal) — ~average adult male
+  widthScale: 1.0,       // multiplier on figure width from image aspect
+  poaPreset: "chest",
   shotType: "flash",
-  aimWithin: 0.5,        // 0..1 slider within the shot-type range
+  aimWithin: 0.5,
   shooterMove: 1.0,
-  targetSpeed: 0,        // yd/s
+  targetSpeed: 0,
   targetAngle: 90,
   targetErratic: false,
   advancedOpen: false,
@@ -94,15 +102,13 @@ const defaultState = {
     encumbrance: 1.0,
     predictability: 1.0,
   },
-  others: [],            // [{id, label, value}]
-  impactMethod: "dice",
+  others: [],
 };
 
 let state = structuredClone(defaultState);
 
 function mergeState(saved) {
   if (!saved || typeof saved !== "object") return;
-  // Shallow merge with defaults, preserve nested adv
   state = {
     ...state,
     ...saved,
@@ -116,28 +122,33 @@ const SHOT_RANGES = {
   flash:      [1.40, 1.70],
   deliberate: [1.80, 2.50],
 };
-
 function aimingMultiplier() {
   const [lo, hi] = SHOT_RANGES[state.shotType] || SHOT_RANGES.flash;
   return lo + state.aimWithin * (hi - lo);
 }
 
-// ---- Derived values (always in imperial internally) ----
+// ---- Derived values ----
 function compute() {
   const weapon = findWeapon(state.weaponId);
   const dispersion = weapon.dispersion;
 
-  const distYd = state.distance;       // already stored as yd
-  const targetInches = state.targetSize; // already stored as inches
-  const theta = thetaMoa(targetInches, distYd);
-  const rf = rangeFactor(theta, dispersion);
+  const distYd = state.distance;
+  const theta = thetaMoa(state.figureHeight, distYd);
   const aim = aimingMultiplier();
 
-  const groundYps = state.targetSpeed;  // stored as yd/s
-  const av = angularVelocity(groundYps, state.targetAngle, distYd);
+  const av = angularVelocity(state.targetSpeed, state.targetAngle, distYd);
   const tmmBase = targetMovementMultiplier(av);
-  const erraticMult = state.targetErratic ? 0.78 : 1.0;
-  const tmm = tmmBase * erraticMult;
+  const erratic = state.targetErratic ? 0.78 : 1.0;
+  const tmm = tmmBase * erratic;
+
+  const silh = getSilhouette();
+  const rf = silh ? monteCarloRF(silh, {
+    figureHeightIn: state.figureHeight,
+    widthScale: state.widthScale,
+    distanceYd: distYd,
+    dispersionMoa: dispersion,
+    poaNorm: POA_PRESETS[state.poaPreset] || POA_PRESETS.chest,
+  }) : 0;
 
   const advMults = Object.values(state.adv);
   const otherMults = state.others.map(o => o.value);
@@ -147,7 +158,7 @@ function compute() {
     ...advMults, ...otherMults,
   ]);
 
-  return { weapon, dispersion, theta, rf, aim, av, tmm, tmmBase, erraticMult, fc };
+  return { weapon, dispersion, theta, rf, aim, av, tmm, fc };
 }
 
 // ---- Rendering ----
@@ -164,10 +175,9 @@ function renderUnits() {
     if (kind === "size")  el.textContent = metric ? "cm" : "in";
     if (kind === "speed") el.textContent = metric ? "m/s" : "yd/s";
   });
-  // Show displayed values converted from internal yd/in.
-  els.distance.value  = +ydToDisplay(state.distance, state.unitSystem).toFixed(2);
-  els.targetSize.value = +inToDisplay(state.targetSize, state.unitSystem).toFixed(2);
-  els.targetSpeed.value = +(state.unitSystem === "metric" ? state.targetSpeed / 1.0936132983 : state.targetSpeed).toFixed(2);
+  els.distance.value = +ydToDisplay(state.distance, state.unitSystem).toFixed(2);
+  els.figureHeight.value = +inToDisplay(state.figureHeight, state.unitSystem).toFixed(1);
+  els.targetSpeed.value = +(metric ? state.targetSpeed / 1.0936132983 : state.targetSpeed).toFixed(2);
 }
 
 function renderWeaponSelect() {
@@ -219,56 +229,63 @@ function escapeHtml(s) {
   }[c]));
 }
 
+function renderPoaMarker() {
+  const poa = POA_PRESETS[state.poaPreset] || POA_PRESETS.chest;
+  const xPct = poa.x * 100;
+  const yPct = poa.y * 100;
+  const marker = els.poaMarker;
+  // Marker is a group of three shapes; position all relative to the (xPct, yPct) point.
+  const [ring, vLine, hLine] = marker.children;
+  ring.setAttribute("cx", xPct.toFixed(2));
+  ring.setAttribute("cy", yPct.toFixed(2));
+  vLine.setAttribute("x1", xPct);       vLine.setAttribute("x2", xPct);
+  vLine.setAttribute("y1", yPct - 4);   vLine.setAttribute("y2", yPct + 4);
+  hLine.setAttribute("x1", xPct - 4);   hLine.setAttribute("x2", xPct + 4);
+  hLine.setAttribute("y1", yPct);       hLine.setAttribute("y2", yPct);
+}
+
 function render() {
-  // Skill
   els.skillOut.textContent = fmt(state.skill, 2);
   els.skillBand.textContent = skillBand(state.skill);
   els.skill.value = state.skill;
 
-  // Platform
   els.platOut.textContent = `×${fmt(state.platform, 2)}`;
   els.platform.value = state.platform.toFixed(2);
 
-  // Weapon readout (render select handled separately)
   const d = compute();
   els.dispOut.textContent = fmt(d.dispersion, d.dispersion < 2 ? 2 : 1);
 
-  // Range/target derived
   els.thetaOut.textContent = fmt(d.theta, 1);
-  els.ratioOut.textContent = fmt(d.theta / d.dispersion, 2);
   els.rfOut.textContent = fmt(d.rf, 3);
 
-  // Aim
   els.aimOut.textContent = `×${fmt(d.aim, 2)}`;
   els.aimSlider.value = state.aimWithin;
 
-  // Shooter move
+  els.widthOut.textContent = `×${fmt(state.widthScale, 2)}`;
+  els.widthScale.value = state.widthScale;
+  els.poaPreset.value = state.poaPreset;
+
   els.shooterMove.value = state.shooterMove.toFixed(2);
 
-  // Target move
   els.angleOut.textContent = `${state.targetAngle}°`;
   els.avOut.textContent = fmt(d.av, 1);
   els.tmmOut.textContent = `×${fmt(d.tmm, 2)}`;
   els.targetAngle.value = state.targetAngle;
   els.targetErratic.checked = state.targetErratic;
 
-  // Advanced
   els.advancedCard.classList.toggle("open", state.advancedOpen);
   for (const [key, val] of Object.entries(state.adv)) {
     const sel = document.querySelector(`[data-adv="${key}"]`);
     if (sel) sel.value = val.toFixed(2);
   }
 
-  // Radio buttons
   for (const r of document.querySelectorAll('input[name="shot"]')) {
     r.checked = (r.value === state.shotType);
   }
 
-  // Impact method
-  els.impactMethod.value = state.impactMethod;
+  renderPoaMarker();
 
-  // Final chance + breakdown
-  els.finalPct.textContent = `${Math.round(d.fc * 100)}%`;
+  els.finalPct.textContent = getSilhouette() ? `${Math.round(d.fc * 100)}%` : "…";
   els.breakdown.textContent = buildBreakdown(d);
 }
 
@@ -298,7 +315,7 @@ function persist() {
   saveTimer = setTimeout(() => saveState(state), 150);
 }
 
-// ---- Event wiring ----
+// ---- Events ----
 function readNumber(el, fallback = 0) {
   const n = parseFloat(el.value);
   return isFinite(n) ? n : fallback;
@@ -306,7 +323,6 @@ function readNumber(el, fallback = 0) {
 
 function wire() {
   els.unit.addEventListener("change", () => {
-    // Convert current stored (imperial) values back to display; no internal change.
     state.unitSystem = els.unit.value;
     persist();
     renderUnits();
@@ -320,9 +336,11 @@ function wire() {
     renderUnits();
     renderWeaponSelect();
     renderOthers();
+    clearImpacts();
     render();
     els.rollResult.textContent = "";
     els.rollResult.className = "roll-result";
+    els.impactReadout.textContent = "";
   });
 
   els.skill.addEventListener("input", () => {
@@ -340,7 +358,6 @@ function wire() {
     if (val === "__custom__") {
       els.customRow.hidden = false;
       els.customName.focus();
-      // Keep previous weapon selected visually
       els.weaponSelect.value = state.weaponId;
       return;
     }
@@ -370,9 +387,20 @@ function wire() {
     persist(); render();
   });
 
-  els.targetSize.addEventListener("input", () => {
-    const v = readNumber(els.targetSize, 1);
-    state.targetSize = Math.max(0.1, sizeToIn(v, state.unitSystem));
+  els.figureHeight.addEventListener("input", () => {
+    const v = readNumber(els.figureHeight, 70);
+    state.figureHeight = Math.max(6, sizeToIn(v, state.unitSystem));
+    persist(); render();
+  });
+
+  els.widthScale.addEventListener("input", () => {
+    state.widthScale = readNumber(els.widthScale, 1);
+    persist(); render();
+  });
+
+  els.poaPreset.addEventListener("change", () => {
+    state.poaPreset = els.poaPreset.value;
+    clearImpacts();
     persist(); render();
   });
 
@@ -432,74 +460,76 @@ function wire() {
   });
 
   els.rollBtn.addEventListener("click", doRoll);
-  els.deviateBtn.addEventListener("click", doDeviate);
-
-  els.impactMethod.addEventListener("change", () => {
-    state.impactMethod = els.impactMethod.value;
-    persist();
-  });
 }
 
 // ---- Roll + impact ----
+function clearImpacts() {
+  els.impactDots.innerHTML = "";
+  els.impactLast.setAttribute("r", "0");
+  els.impactLast.setAttribute("cx", "-10");
+  els.impactLast.setAttribute("cy", "-10");
+  els.impactLast.classList.remove("miss");
+}
+
 function doRoll() {
-  const { fc } = compute();
+  const silh = getSilhouette();
+  if (!silh) return;
+  const { fc, dispersion } = compute();
   const roll = rollD100();
   const pct = Math.round(fc * 100);
   const hit = roll <= pct;
   const margin = Math.abs(roll - pct);
   els.rollResult.textContent = `d100 = ${roll} vs ${pct}% → ${hit ? "HIT" : "MISS"} (by ${margin})`;
   els.rollResult.className = `roll-result ${hit ? "hit" : "miss"}`;
-  // Open impact panel so the player can sample where the shot actually landed.
-  els.impactPanel.open = true;
-  doDeviate();
+
+  const tightness = tightnessForShotType(state.shotType);
+  const impact = sampleImpactForOutcome(silh, {
+    figureHeightIn: state.figureHeight,
+    widthScale: state.widthScale,
+    distanceYd: state.distance,
+    dispersionMoa: dispersion,
+    poaNorm: POA_PRESETS[state.poaPreset] || POA_PRESETS.chest,
+  }, tightness, hit);
+
+  plotImpact(impact, hit);
+
+  const sizeUnit = state.unitSystem === "metric" ? "cm" : "in";
+  const xDisp = inToDisplay(impact.xIn, state.unitSystem);
+  const yDisp = inToDisplay(impact.yIn, state.unitSystem);
+  const geomNote = impact.hit ? "silhouette hit" : "silhouette miss";
+  els.impactReadout.textContent =
+    `Impact: ${impact.xMoa >= 0 ? "R" : "L"} ${Math.abs(impact.xMoa).toFixed(1)} MOA ` +
+    `(${Math.abs(xDisp).toFixed(1)} ${sizeUnit}) · ` +
+    `${impact.yMoa >= 0 ? "low" : "high"} ${Math.abs(impact.yMoa).toFixed(1)} MOA ` +
+    `(${Math.abs(yDisp).toFixed(1)} ${sizeUnit}) · ${geomNote}`;
 }
 
-function doDeviate() {
-  const { dispersion } = compute();
-  const tightness = tightnessForShotType(state.shotType);
-  const { xMoa, yMoa } = state.impactMethod === "normal"
-    ? sampleDeviationNormal(dispersion, tightness)
-    : sampleDeviationDice(dispersion);
+function plotImpact(impact, diceHit) {
+  const silh = getSilhouette();
+  if (!silh) return;
+  const xPct = (impact.xPx / silh.width) * 100;
+  const yPct = (impact.yPx / silh.height) * 100;
 
-  const distYd = state.distance;
-  const xIn = (xMoa * distYd) / 95.5;
-  const yIn = (yMoa * distYd) / 95.5;
-  const xDisp = inToDisplay(xIn, state.unitSystem);
-  const yDisp = inToDisplay(yIn, state.unitSystem);
-  const sizeUnit = state.unitSystem === "metric" ? "cm" : "in";
-
-  // Plot on SVG: clamp dispersion display to fit ±3σ into the 100-unit viewBox half-width.
-  const dispersionForScale = Math.max(dispersion, 0.5);
-  const viewHalf = 45;
-  const scale = viewHalf / (dispersionForScale * 3); // fits ±3σ of the normal approximation
-  const cx = Math.max(-50, Math.min(50, xMoa * scale));
-  const cy = Math.max(-50, Math.min(50, -yMoa * scale)); // invert: positive Y in MOA = below POA; SVG y grows downward, so up is negative
-
-  // Move previous "last" dot into persistent dots, cap total to 20.
+  // Demote the previous "last" dot into persistent history.
   const prev = els.impactLast;
   if (+prev.getAttribute("r") > 0) {
     const keep = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     keep.setAttribute("cx", prev.getAttribute("cx"));
     keep.setAttribute("cy", prev.getAttribute("cy"));
-    keep.setAttribute("r", "1");
-    keep.setAttribute("fill", "var(--muted)");
-    keep.setAttribute("opacity", "0.5");
+    keep.setAttribute("r", "0.8");
     els.impactDots.appendChild(keep);
     while (els.impactDots.childElementCount > 20) {
       els.impactDots.removeChild(els.impactDots.firstChild);
     }
   }
-  prev.setAttribute("cx", cx.toFixed(2));
-  prev.setAttribute("cy", cy.toFixed(2));
-  prev.setAttribute("r", "2");
-
-  els.impactReadout.textContent =
-    `X ${xMoa >= 0 ? "R" : "L"} ${Math.abs(xMoa).toFixed(1)} MOA (${Math.abs(xDisp).toFixed(1)} ${sizeUnit}) · ` +
-    `Y ${yMoa >= 0 ? "low" : "high"} ${Math.abs(yMoa).toFixed(1)} MOA (${Math.abs(yDisp).toFixed(1)} ${sizeUnit})`;
+  prev.setAttribute("cx", xPct.toFixed(2));
+  prev.setAttribute("cy", yPct.toFixed(2));
+  prev.setAttribute("r", "1.4");
+  prev.classList.toggle("miss", !diceHit);
 }
 
 // ---- Init ----
-function init() {
+async function init() {
   mergeState(loadState());
   renderUnits();
   renderWeaponSelect();
@@ -507,11 +537,22 @@ function init() {
   wire();
   render();
 
-  // Register service worker only on http(s), not file://.
+  // Service worker (skip on file://).
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("./sw.js").catch(() => {});
     });
+  }
+
+  // Async: load silhouette, then recompute RF.
+  try {
+    const silh = await loadSilhouette(SILHOUETTE_URL, 360);
+    els.silhouetteImg.src = silh.displayUrl;
+    // Set the overlay viewBox to percent space (already 0..100), image fills 100% × 100%.
+    render();
+  } catch (err) {
+    els.impactReadout.textContent = `Could not load silhouette: ${err.message}`;
+    els.finalPct.textContent = "—";
   }
 }
 

@@ -1,5 +1,5 @@
 // Minimal offline cache for the app shell.
-const CACHE_VERSION = "ballistics-v1";
+const CACHE_VERSION = "ballistics-v3";
 const SHELL = [
   "./",
   "./index.html",
@@ -9,9 +9,11 @@ const SHELL = [
   "./dice.js",
   "./presets.js",
   "./storage.js",
+  "./silhouette.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./assets/06wi_yzok_190916.jpg",
 ];
 
 self.addEventListener("install", (event) => {

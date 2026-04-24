@@ -69,7 +69,7 @@
     </section>
 
     <section class="card">
-      <h2>Range &amp; Target</h2>
+      <h2>Target</h2>
 
       <div class="field-grid">
         <label class="field">
@@ -77,14 +77,42 @@
           <input type="number" id="distance" step="1" min="1" value="50">
         </label>
         <label class="field">
-          <span class="field-label">Target size (<span data-unit="size">in</span>)</span>
-          <input type="number" id="target-size" step="1" min="1" value="20">
+          <span class="field-label">Figure height (<span data-unit="size">in</span>)</span>
+          <input type="number" id="figure-height" step="0.5" min="12" value="70">
         </label>
       </div>
 
+      <label class="field">
+        <span class="field-label">Figure width <output id="width-out">×1.00</output></span>
+        <input type="range" id="width-scale" min="0.70" max="1.30" step="0.01" value="1.00">
+      </label>
+
+      <label class="field">
+        <span class="field-label">Point of aim</span>
+        <select id="poa-preset">
+          <option value="head">Head</option>
+          <option value="chest" selected>Chest (center mass)</option>
+          <option value="abdomen">Abdomen</option>
+          <option value="leg">Leg</option>
+        </select>
+      </label>
+
+      <div class="silhouette-stage" id="silhouette-stage" aria-label="Target silhouette">
+        <img id="silhouette-img" alt="" draggable="false">
+        <svg class="silhouette-overlay" id="silhouette-overlay"
+             viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <g id="poa-marker" class="poa-marker">
+            <circle cx="50" cy="22" r="1.2"/>
+            <line x1="50" y1="18" x2="50" y2="26"/>
+            <line x1="46" y1="22" x2="54" y2="22"/>
+          </g>
+          <g id="impact-dots"></g>
+          <circle id="impact-last" cx="-10" cy="-10" r="0" class="impact-last"/>
+        </svg>
+      </div>
+
       <p class="readout">
-        θ = <output id="theta-out">—</output> MOA ·
-        Ratio = <output id="ratio-out">—</output> ·
+        θ ≈ <output id="theta-out">—</output> MOA tall ·
         Range Factor = <output id="rf-out">—</output>
       </p>
     </section>
@@ -239,33 +267,7 @@
   </div>
   <p class="breakdown" id="breakdown"></p>
   <p class="roll-result" id="roll-result"></p>
-
-  <details id="impact-panel">
-    <summary>Impact location</summary>
-    <div class="impact-body">
-      <div class="impact-controls">
-        <label>
-          <span>Method</span>
-          <select id="impact-method">
-            <option value="dice">3d6 dice</option>
-            <option value="normal">Normal sample</option>
-          </select>
-        </label>
-        <button type="button" id="deviate-btn" class="ghost-btn">Sample impact</button>
-      </div>
-      <svg id="impact-svg" viewBox="-50 -50 100 100" preserveAspectRatio="xMidYMid meet" aria-label="Impact diagram">
-        <rect x="-50" y="-50" width="100" height="100" fill="var(--panel)" />
-        <circle cx="0" cy="0" r="45" fill="none" stroke="var(--muted)" stroke-width="0.4"/>
-        <circle cx="0" cy="0" r="30" fill="none" stroke="var(--muted)" stroke-width="0.4"/>
-        <circle cx="0" cy="0" r="15" fill="none" stroke="var(--muted)" stroke-width="0.4"/>
-        <line x1="-50" y1="0" x2="50" y2="0" stroke="var(--muted)" stroke-width="0.3"/>
-        <line x1="0" y1="-50" x2="0" y2="50" stroke="var(--muted)" stroke-width="0.3"/>
-        <g id="impact-dots"></g>
-        <circle id="impact-last" cx="0" cy="0" r="0" fill="var(--accent)"/>
-      </svg>
-      <p class="impact-readout" id="impact-readout">—</p>
-    </div>
-  </details>
+  <p class="impact-readout" id="impact-readout"></p>
 </footer>
 
 <script type="module" src="./app.js"></script>

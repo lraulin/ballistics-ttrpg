@@ -3,17 +3,11 @@
 export const MIN_CHANCE = 0.01;
 export const MAX_CHANCE = 0.99;
 
-// θ_MOA = (target_size_in × 95.5) / distance_yd
+// θ_MOA = (target_size_in × 95.5) / distance_yd. Used for the display readout
+// ("figure ≈ N MOA tall"); the silhouette-based Range Factor lives in silhouette.js.
 export function thetaMoa(targetIn, distanceYd) {
   if (!(distanceYd > 0) || !(targetIn > 0)) return 0;
   return (targetIn * 95.5) / distanceYd;
-}
-
-// Range Factor = 1 − exp(−0.11 × (θ/dispersion)²)
-export function rangeFactor(thetaMoaValue, dispersionMoa) {
-  if (!(dispersionMoa > 0)) return 0;
-  const ratio = thetaMoaValue / dispersionMoa;
-  return 1 - Math.exp(-0.11 * ratio * ratio);
 }
 
 // AV_MOA_per_s = (lateral_speed_yps × 3438) / distance_yd
@@ -53,13 +47,13 @@ export function skillBand(skill) {
 
 // Unit conversions (display only; internals stay imperial).
 export const YD_PER_M = 1.0936132983;
-export const IN_PER_CM = 0.3937007874;
+export const CM_PER_IN = 2.54;
 
 export function distanceToYd(value, unitSystem) {
   return unitSystem === "metric" ? value * YD_PER_M : value;
 }
 export function sizeToIn(value, unitSystem) {
-  return unitSystem === "metric" ? value / IN_PER_CM : value;
+  return unitSystem === "metric" ? value / CM_PER_IN : value;
 }
 export function speedToYps(value, unitSystem) {
   // metric input is m/s, imperial input is yd/s
@@ -70,5 +64,5 @@ export function ydToDisplay(yd, unitSystem) {
   return unitSystem === "metric" ? yd / YD_PER_M : yd;
 }
 export function inToDisplay(inches, unitSystem) {
-  return unitSystem === "metric" ? inches * 2.54 : inches;
+  return unitSystem === "metric" ? inches * CM_PER_IN : inches;
 }
