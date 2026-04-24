@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>Ballistics — TTRPG Hit Calculator</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<header class="app-header">
+  <h1>Ballistics</h1>
+  <div class="header-controls">
+    <label class="unit-toggle">
+      <span>Units</span>
+      <select id="unit-system">
+        <option value="imperial">yd / in</option>
+        <option value="metric">m / cm</option>
+      </select>
+    </label>
+    <button type="button" id="reset-btn" class="ghost-btn">Reset</button>
+  </div>
+</header>
+
+<main>
+  <form id="calc-form" autocomplete="off">
+
+    <section class="card">
+      <h2>Shooter</h2>
+
+      <label class="field">
+        <span class="field-label">
+          Marksmanship <output id="skill-out">0.55</output>
+          <em id="skill-band">Sharpshooter</em>
+        </span>
+        <input type="range" id="skill" min="0.01" max="0.99" step="0.01" value="0.55">
+      </label>
+
+      <label class="field">
+        <span class="field-label">Platform familiarity <output id="plat-out">×1.00</output></span>
+        <select id="platform">
+          <option value="1.00">Primary / trained — ×1.00</option>
+          <option value="0.90">Unfamiliar long gun — ×0.90</option>
+          <option value="0.80">Unfamiliar pistol — ×0.80</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Weapon</h2>
+
+      <label class="field">
+        <span class="field-label">Preset</span>
+        <select id="weapon-select"></select>
+      </label>
+
+      <div class="field inline" id="custom-weapon-row" hidden>
+        <input type="text" id="custom-name" placeholder="Name (e.g. .308 bolt)">
+        <input type="number" id="custom-moa" step="0.05" min="0.1" max="60" placeholder="Dispersion MOA">
+        <button type="button" id="save-weapon" class="primary-btn">Save</button>
+      </div>
+
+      <p class="readout">
+        Dispersion: <output id="disp-out">3.5</output> MOA
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Range &amp; Target</h2>
+
+      <div class="field-grid">
+        <label class="field">
+          <span class="field-label">Distance (<span data-unit="dist">yd</span>)</span>
+          <input type="number" id="distance" step="1" min="1" value="50">
+        </label>
+        <label class="field">
+          <span class="field-label">Target size (<span data-unit="size">in</span>)</span>
+          <input type="number" id="target-size" step="1" min="1" value="20">
+        </label>
+      </div>
+
+      <p class="readout">
+        θ = <output id="theta-out">—</output> MOA ·
+        Ratio = <output id="ratio-out">—</output> ·
+        Range Factor = <output id="rf-out">—</output>
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Shot type</h2>
+      <div class="radio-group" id="shot-type">
+        <label>
+          <input type="radio" name="shot" value="point" data-min="0.55" data-max="0.70">
+          <div>
+            <strong>Point / Hip fire</strong>
+            <span>×0.55–0.70 · 0 extra time</span>
+          </div>
+        </label>
+        <label>
+          <input type="radio" name="shot" value="flash" data-min="1.40" data-max="1.70" checked>
+          <div>
+            <strong>Flash / Quick aim</strong>
+            <span>×1.40–1.70 · ½–1 action</span>
+          </div>
+        </label>
+        <label>
+          <input type="radio" name="shot" value="deliberate" data-min="1.80" data-max="2.50">
+          <div>
+            <strong>Deliberate aim</strong>
+            <span>×1.80–2.50 · 1–2 actions</span>
+          </div>
+        </label>
+      </div>
+      <label class="field">
+        <span class="field-label">Within range: <output id="aim-out">×1.55</output></span>
+        <input type="range" id="aim-slider" min="0" max="1" step="0.01" value="0.5">
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Shooter movement</h2>
+      <label class="field">
+        <select id="shooter-move">
+          <option value="1.00">Stationary / braced — ×1.00</option>
+          <option value="0.82">Tactical walk / glide — ×0.82</option>
+          <option value="0.65">Jog / moderate — ×0.65</option>
+          <option value="0.50">Run / hustle — ×0.50</option>
+          <option value="0.35">Full sprint — ×0.35</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Target movement</h2>
+      <div class="field-grid">
+        <label class="field">
+          <span class="field-label">Ground speed (<span data-unit="speed">yd/s</span>)</span>
+          <input type="number" id="target-speed" step="0.1" min="0" value="0">
+        </label>
+        <label class="field">
+          <span class="field-label">Crossing angle <output id="angle-out">90°</output></span>
+          <input type="range" id="target-angle" min="0" max="90" step="5" value="90">
+        </label>
+      </div>
+      <label class="field checkbox">
+        <input type="checkbox" id="target-erratic">
+        <span>Erratic / zig-zag (×0.78)</span>
+      </label>
+      <p class="readout">
+        Angular velocity = <output id="av-out">0</output> MOA/s ·
+        Target mult = <output id="tmm-out">×1.00</output>
+      </p>
+    </section>
+
+    <section class="card collapsible" id="advanced-card">
+      <button type="button" class="collapse-toggle" id="advanced-toggle">
+        <h2>Advanced multipliers</h2>
+        <span class="chev">▾</span>
+      </button>
+      <div class="collapse-body">
+        <label class="field">
+          <span class="field-label">Supported shooting</span>
+          <select data-adv="supported">
+            <option value="1.00">None — ×1.00</option>
+            <option value="1.30">Kneeling / braced — ×1.30</option>
+            <option value="1.55">Barricade / sitting — ×1.55</option>
+            <option value="1.80">Prone / bipod — ×1.80</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Close-range acquisition (unsighted)</span>
+          <select data-adv="acquisition">
+            <option value="1.00">N/A — ×1.00</option>
+            <option value="0.90">~10 yd unsighted — ×0.90</option>
+            <option value="0.80">~5 yd unsighted — ×0.80</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Lighting</span>
+          <select data-adv="lighting">
+            <option value="1.00">Bright / clear — ×1.00</option>
+            <option value="0.90">Overcast / indoor — ×0.90</option>
+            <option value="0.75">Dim / dusk — ×0.75</option>
+            <option value="0.55">Dark / low-light — ×0.55</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Cover (target concealment)</span>
+          <select data-adv="cover">
+            <option value="1.00">Exposed — ×1.00</option>
+            <option value="0.80">Light cover (¼) — ×0.80</option>
+            <option value="0.60">Half cover — ×0.60</option>
+            <option value="0.35">Heavy cover (¾) — ×0.35</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Stress / adrenaline</span>
+          <select data-adv="stress">
+            <option value="1.00">Calm — ×1.00</option>
+            <option value="0.85">Alert — ×0.85</option>
+            <option value="0.70">Combat stress — ×0.70</option>
+            <option value="0.50">Panic / ambush — ×0.50</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Encumbrance</span>
+          <select data-adv="encumbrance">
+            <option value="1.00">None — ×1.00</option>
+            <option value="0.92">Light load — ×0.92</option>
+            <option value="0.82">Heavy load — ×0.82</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Target predictability</span>
+          <select data-adv="predictability">
+            <option value="1.00">Normal — ×1.00</option>
+            <option value="1.15">Predictable straight line — ×1.15</option>
+          </select>
+        </label>
+
+        <div id="other-multipliers"></div>
+        <button type="button" class="ghost-btn" id="add-other">+ Add custom ×N</button>
+      </div>
+    </section>
+
+  </form>
+</main>
+
+<footer class="result-bar" id="result-bar">
+  <div class="result-top">
+    <div class="final">
+      <span class="label">Final chance</span>
+      <span class="value" id="final-pct">—</span>
+    </div>
+    <button type="button" id="roll-btn" class="primary-btn">Roll d100</button>
+  </div>
+  <p class="breakdown" id="breakdown"></p>
+  <p class="roll-result" id="roll-result"></p>
+
+  <details id="impact-panel">
+    <summary>Impact location</summary>
+    <div class="impact-body">
+      <div class="impact-controls">
+        <label>
+          <span>Method</span>
+          <select id="impact-method">
+            <option value="dice">3d6 dice</option>
+            <option value="normal">Normal sample</option>
+          </select>
+        </label>
+        <button type="button" id="deviate-btn" class="ghost-btn">Sample impact</button>
+      </div>
+      <svg id="impact-svg" viewBox="-50 -50 100 100" preserveAspectRatio="xMidYMid meet" aria-label="Impact diagram">
+        <rect x="-50" y="-50" width="100" height="100" fill="var(--panel)" />
+        <circle cx="0" cy="0" r="45" fill="none" stroke="var(--muted)" stroke-width="0.4"/>
+        <circle cx="0" cy="0" r="30" fill="none" stroke="var(--muted)" stroke-width="0.4"/>
+        <circle cx="0" cy="0" r="15" fill="none" stroke="var(--muted)" stroke-width="0.4"/>
+        <line x1="-50" y1="0" x2="50" y2="0" stroke="var(--muted)" stroke-width="0.3"/>
+        <line x1="0" y1="-50" x2="0" y2="50" stroke="var(--muted)" stroke-width="0.3"/>
+        <g id="impact-dots"></g>
+        <circle id="impact-last" cx="0" cy="0" r="0" fill="var(--accent)"/>
+      </svg>
+      <p class="impact-readout" id="impact-readout">—</p>
+    </div>
+  </details>
+</footer>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
