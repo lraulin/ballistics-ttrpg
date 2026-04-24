@@ -1,16 +1,29 @@
 import {
-  thetaMoa, angularVelocity, targetMovementMultiplier,
-  finalChance, clamp, skillBand,
-  distanceToYd, sizeToIn, speedToYps, ydToDisplay, inToDisplay,
+    angularVelocity,
+    clamp,
+    distanceToYd,
+    finalChance,
+    inToDisplay,
+    sizeToIn,
+    skillBand,
+    speedToYps,
+    targetMovementMultiplier,
+    thetaMoa,
+    ydToDisplay,
 } from "./calc.js";
 import { rollD100, tightnessForShotType } from "./dice.js";
 import {
-  BUILTIN_WEAPONS, getAllWeapons, addCustomWeapon, findWeapon,
+    addCustomWeapon, findWeapon,
+    getAllWeapons
 } from "./presets.js";
-import { loadState, saveState } from "./storage.js";
 import {
-  loadSilhouette, getSilhouette, monteCarloRF, sampleImpactForOutcome, POA_PRESETS,
+    getSilhouette,
+    loadSilhouette,
+    monteCarloRF,
+    POA_PRESETS,
+    sampleImpactForOutcome,
 } from "./silhouette.js";
+import { loadState, saveState } from "./storage.js";
 
 const SILHOUETTE_URL = "./assets/06wi_yzok_190916.jpg";
 
