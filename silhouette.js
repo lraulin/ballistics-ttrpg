@@ -1,7 +1,7 @@
 // Loads a silhouette image, builds a binary hit-mask, and provides
 // Monte-Carlo Range Factor + single-impact sampling against that mask.
 
-const BG_THRESHOLD = 240;   // all RGB channels >= this means "background"
+// Mask detection uses alpha only — works correctly with a transparent-background PNG.
 
 // Deterministic unit-normal pool. Same random samples are reused for every MC
 // call so the displayed RF is a smooth function of inputs (no jitter).
@@ -63,8 +63,8 @@ export function loadSilhouette(url, targetHeightPx = 360) {
     for (let y = 0; y < h0; y++) {
       for (let x = 0; x < w0; x++) {
         const i = (y * w0 + x) * 4;
-        const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2], a = pixels[i + 3];
-        const isBody = a > 16 && !(r >= BG_THRESHOLD && g >= BG_THRESHOLD && b >= BG_THRESHOLD);
+        const a = pixels[i + 3];
+        const isBody = a > 16;
         if (isBody) {
           if (x < minX) minX = x;
           if (y < minY) minY = y;
@@ -81,8 +81,7 @@ export function loadSilhouette(url, targetHeightPx = 360) {
     for (let y = 0; y < bboxH; y++) {
       for (let x = 0; x < bboxW; x++) {
         const i = ((y + minY) * w0 + (x + minX)) * 4;
-        const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2], a = pixels[i + 3];
-        const isBody = a > 16 && !(r >= BG_THRESHOLD && g >= BG_THRESHOLD && b >= BG_THRESHOLD);
+        const isBody = pixels[i + 3] > 16;
         if (isBody) mask[y * bboxW + x] = 1;
       }
     }

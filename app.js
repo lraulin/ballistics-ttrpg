@@ -25,7 +25,7 @@ import {
 } from "./silhouette.js";
 import { loadState, saveState } from "./storage.js";
 
-const SILHOUETTE_URL = "./assets/06wi_yzok_190916.jpg";
+const SILHOUETTE_URL = "./assets/silhouette_transparent_packground.png";
 
 // ---- DOM ----
 const $ = (sel) => document.querySelector(sel);
