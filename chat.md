@@ -943,3 +943,84 @@ Update the full rules document (v0.6) with this new “Dynamic Dispersion” sec
 Or tweak the exponent / formula before you implement it?
 
 This one change will make the hit-location visuals on your app feel dramatically more realistic. Let’s get it looking right!
+
+**Shotguns integrate beautifully into our existing system** — no major overhaul needed. We already have dynamic dispersion, silhouette hit-testing, and per-shot simulation in the web app, so shotguns just become a new “projectile type” with two sub-modes: **Slug** (single projectile) and **Buckshot** (multiple pellets + pattern spread).
+
+### 1. Slugs (Single Projectile)
+
+Treat exactly like a rifle or pistol round.
+
+- **Base Dispersion**: 6–8 MOA (real-world average from rifled-barrel slug tests; groups are typically 6–12" at 50 yards, which is ~6–8 MOA).
+- Everything else stays identical:
+  - Same Range Factor formula (θ_MOA / dispersion).
+  - Same dynamic Effective Dispersion (scaled by Shooter Control Factor).
+  - Same d100 roll + rejection sampling on the silhouette.
+- Only difference: you can give the shotgun a slightly higher base dispersion stat when loaded with slugs.
+
+### 2. Buckshot (Multiple Pellets + Pattern Spread)
+
+This is where shotguns shine and feel unique. We model **each pellet individually** on the silhouette — the web app can plot every single impact dot in real time.
+
+**Core Data (real-world patterns)**
+
+- Typical 12ga 00 Buck (9 pellets) or #1 Buck (12–15 pellets).
+- Pattern spread is roughly linear with range:
+  - Cylinder bore: ~0.8–1.2 inches of diameter growth per yard (classic “1 inch per yard” rule of thumb, confirmed in multiple tests).
+  - Improved Cylinder / modern FliteControl wads: ~0.5–0.8 inches per yard (much tighter).
+  - Full choke: even tighter (~0.4–0.6 inches per yard).
+
+**In-game modeling (app-friendly & realistic)**
+
+1. **Pattern Center**
+   Sample the _center_ of the entire pattern using your normal dynamic dispersion:
+   \[
+   \text{Effective Dispersion MOA (pattern center)} = \text{Gun Base MOA} \times \left( \frac{1}{\text{Shooter Control Factor}^{0.65}} \right)
+   \]
+   (Exactly the same formula we already use.)
+
+2. **Individual Pellet Scatter**
+   Each pellet gets a small extra random offset from the pattern center:
+   - Pellet dispersion σ ≈ 0.5–1.5 MOA (very tight — pellets are stable).
+   - Plus the pattern radius term:
+     \[
+     \text{Pattern Radius (inches)} \approx \text{range in yards} \times \text{Spread Factor}
+     \]
+     - Spread Factor examples:
+       - Cylinder bore: 1.0
+       - Improved Cylinder: 0.75
+       - FliteControl / modern defensive loads: 0.5–0.6
+
+3. **Hit Detection**
+   For each pellet:
+   - Convert its total deviation (center + pellet scatter) to X/Y inches at current range.
+   - Hit-test against the silhouette (pixel check or polygon).
+   - No per-pellet d100 — the geometry decides naturally.
+
+**Probability stays clean**
+
+- One single d100 roll per trigger pull (the “pattern accuracy” roll).
+- If you want the d100 to be authoritative, you can still do light rejection sampling on the pattern _center_ (keep re-sampling the center until the overall number of hits matches the expected probability).
+- In practice most groups just let the geometry speak for itself — the hit probability emerges correctly from skill + range + choke.
+
+### Web App Implementation (Tiny Addition)
+
+- Add a “Shotgun Mode” toggle: Slug vs Buckshot.
+- For buckshot, the app loops N times (9–15 pellets) and plots each one.
+- Display: “9 pellets fired — 6 hits (center mass, arms, leg)” with every dot visible on the silhouette.
+- Optional choke selector in the weapon profile (Cylinder / IC / Full) that changes the Spread Factor.
+
+**Example** (competent shooter Skill 0.60, 15 yd range, Cylinder bore 00 Buck 9 pellets, Flash Aim, light movement):
+
+- Pattern center lands well → most pellets hit.
+- Pattern diameter ≈ 15 inches → pellets are still fairly clustered.
+- At 35 yd the same load spreads to ~35 inches → only 2–4 pellets typically hit the body.
+
+This gives the classic shotgun “wall of lead” feel at close range and the realistic fall-off at distance, while staying 100 % compatible with every multiplier we’ve already built (movement, stress, rapid fire recoil degradation, etc.).
+
+Would you like:
+
+- The exact JavaScript snippet for buckshot pellet simulation + pattern math?
+- Updated rules document section (v0.6) with tables for common loads/chokes?
+- Or a quick example of what the app output would look like for a 3-round rapid buckshot burst?
+
+This is going to feel _fantastic_ on the web app.

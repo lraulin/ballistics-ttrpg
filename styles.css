@@ -330,6 +330,14 @@ output {
 .poa-marker circle {
   fill: rgba(124, 196, 255, 0.25);
 }
+.zone-outline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.5;
+  stroke-dasharray: 1.5 1;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.55;
+}
 #impact-dots circle {
   fill: var(--hit);
   opacity: 0.85;

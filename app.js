@@ -29,6 +29,7 @@ import {
     monteCarloRF,
     POA_PRESETS,
     sampleImpactForOutcome,
+    ZONE_DEFS,
 } from "./silhouette.js";
 import { loadState, saveState } from "./storage.js";
 
@@ -65,6 +66,7 @@ const els = {
   silhouetteImg: $("#silhouette-img"),
   silhouetteOverlay: $("#silhouette-overlay"),
   poaMarker: $("#poa-marker"),
+  zoneOutline: $("#zone-outline"),
   impactDots: $("#impact-dots"),
   impactLast: $("#impact-last"),
 
@@ -168,13 +170,14 @@ function compute() {
   const tmm = tmmBase * erratic;
 
   const silh = getSilhouette();
+  const zoneMask = silh?.zones?.[state.poaPreset] || null;
   const rf = silh ? monteCarloRF(silh, {
     figureHeightIn: state.figureHeight,
     widthScale: state.widthScale,
     distanceYd: distYd,
     dispersionMoa: dispersion,
     poaNorm: POA_PRESETS[state.poaPreset] || POA_PRESETS.chest,
-  }) : 0;
+  }, zoneMask) : 0;
 
   const advMults = Object.values(state.adv);
   const otherMults = state.others.map(o => o.value);
@@ -190,7 +193,7 @@ function compute() {
 
   const fc = finalChance(state.skill, [rf, ...controlMults]);
 
-  return { weapon, dispersion, theta, rf, aim, av, tmm, fc, control };
+  return { weapon, dispersion, theta, rf, aim, av, tmm, fc, control, zoneMask };
 }
 
 // ---- Rendering ----
@@ -291,7 +294,6 @@ function renderPoaMarker() {
   const xPct = poa.x * 100;
   const yPct = poa.y * 100;
   const marker = els.poaMarker;
-  // Marker is a group of three shapes; position all relative to the (xPct, yPct) point.
   const [ring, vLine, hLine] = marker.children;
   ring.setAttribute("cx", xPct.toFixed(2));
   ring.setAttribute("cy", yPct.toFixed(2));
@@ -299,6 +301,18 @@ function renderPoaMarker() {
   vLine.setAttribute("y1", yPct - 4);   vLine.setAttribute("y2", yPct + 4);
   hLine.setAttribute("x1", xPct - 4);   hLine.setAttribute("x2", xPct + 4);
   hLine.setAttribute("y1", yPct);       hLine.setAttribute("y2", yPct);
+
+  // Show the called-shot zone outline. Chest = no zone, so collapse the ellipse.
+  const zone = ZONE_DEFS[state.poaPreset];
+  if (zone) {
+    els.zoneOutline.setAttribute("cx", (zone.cx * 100).toFixed(2));
+    els.zoneOutline.setAttribute("cy", (zone.cy * 100).toFixed(2));
+    els.zoneOutline.setAttribute("rx", (zone.rx * 100).toFixed(2));
+    els.zoneOutline.setAttribute("ry", (zone.ry * 100).toFixed(2));
+  } else {
+    els.zoneOutline.setAttribute("rx", "0");
+    els.zoneOutline.setAttribute("ry", "0");
+  }
 }
 
 function render() {
@@ -562,15 +576,17 @@ function describeFireMode(mode, rounds, weapon) {
 function doRoll() {
   const silh = getSilhouette();
   if (!silh) return;
-  const { fc, dispersion, weapon, control } = compute();
+  const { fc, dispersion, weapon, control, zoneMask } = compute();
   const tightness = tightnessForShotType(state.shotType);
   const recoilCls = weapon?.recoilClass ?? 1.0;
   const rounds = state.fireMode === "single" ? 1 : Math.max(1, state.roundCount);
+  const zoneLabel = zoneMask ? state.poaPreset : null;
 
   clearImpacts();
 
   const lines = [];
-  let hits = 0;
+  let zoneHits = 0;
+  let bodyHits = 0;
   let lastHit = false;
 
   for (let i = 0; i < rounds; i++) {
@@ -579,7 +595,6 @@ function doRoll() {
     const pct = Math.round(shotFc * 100);
     const roll = rollD100();
     const hit = roll <= pct;
-    if (hit) hits++;
     lastHit = hit;
 
     // Effective dispersion = base / control^0.65. Recoil for this shot is
@@ -594,10 +609,13 @@ function doRoll() {
       distanceYd: state.distance,
       dispersionMoa: effectiveDispersion,
       poaNorm: POA_PRESETS[state.poaPreset] || POA_PRESETS.chest,
-    }, tightness, hit);
+    }, tightness, hit, zoneMask);
+
+    if (impact.onZone) zoneHits++;
+    if (impact.onBody) bodyHits++;
 
     plotShot(impact, hit, i === rounds - 1);
-    lines.push(formatShotLine(i + 1, hit, roll, pct, impact));
+    lines.push(formatShotLine(i + 1, roll, pct, impact, zoneLabel));
   }
 
   if (rounds === 1) {
@@ -606,9 +624,11 @@ function doRoll() {
     els.rollResult.className = `roll-result ${lastHit ? "hit" : "miss"}`;
     els.impactReadout.textContent = lines[0];
   } else {
-    const cls = hits === 0 ? "miss" : (hits === rounds ? "hit" : "");
-    els.rollResult.textContent =
-      `${rounds}-rd ${FIRE_MODE_LABELS[state.fireMode]}: ${hits}/${rounds} hit${hits === 1 ? "" : "s"}`;
+    const cls = zoneHits === 0 ? "miss" : (zoneHits === rounds ? "hit" : "");
+    const summary = zoneLabel
+      ? `${zoneHits}/${rounds} on ${zoneLabel}, ${bodyHits}/${rounds} on body`
+      : `${zoneHits}/${rounds} hit${zoneHits === 1 ? "" : "s"}`;
+    els.rollResult.textContent = `${rounds}-rd ${FIRE_MODE_LABELS[state.fireMode]}: ${summary}`;
     els.rollResult.className = `roll-result ${cls}`;
     els.impactReadout.innerHTML = lines.map(l =>
       `<span class="shot-line">${escapeHtml(l)}</span>`
@@ -616,15 +636,23 @@ function doRoll() {
   }
 }
 
-function formatShotLine(n, hit, roll, pct, impact) {
+function formatShotLine(n, roll, pct, impact, zoneLabel) {
   const sizeUnit = state.unitSystem === "metric" ? "cm" : "in";
   const xDisp = inToDisplay(impact.xIn, state.unitSystem);
   const yDisp = inToDisplay(impact.yIn, state.unitSystem);
-  return (
-    `Shot ${n}: ${hit ? "HIT" : "MISS"} (d100=${roll} vs ${pct}%) · ` +
+  const pos =
     `${impact.xMoa >= 0 ? "R" : "L"} ${Math.abs(xDisp).toFixed(1)} ${sizeUnit}, ` +
-    `${impact.yMoa >= 0 ? "low" : "high"} ${Math.abs(yDisp).toFixed(1)} ${sizeUnit}`
-  );
+    `${impact.yMoa >= 0 ? "low" : "high"} ${Math.abs(yDisp).toFixed(1)} ${sizeUnit}`;
+
+  let outcome;
+  if (impact.onZone) {
+    outcome = zoneLabel ? `HIT ${zoneLabel}` : `HIT`;
+  } else if (impact.onBody) {
+    outcome = zoneLabel ? `MISS ${zoneLabel} — hit body` : `MISS`;
+  } else {
+    outcome = `MISS — off`;
+  }
+  return `Shot ${n}: ${outcome} (d100=${roll} vs ${pct}%) · ${pos}`;
 }
 
 function plotShot(impact, isHit, isLatest) {

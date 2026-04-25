@@ -94,7 +94,8 @@ export function loadSilhouette(url, targetHeightPx = 360) {
     dctx.drawImage(workCanvas, minX, minY, bboxW, bboxH, 0, 0, bboxW, bboxH);
     const displayUrl = dispCanvas.toDataURL("image/png");
 
-    cached = { mask, width: bboxW, height: bboxH, displayUrl, sourceUrl: url };
+    const zones = buildZoneMasks(mask, bboxW, bboxH);
+    cached = { mask, width: bboxW, height: bboxH, displayUrl, sourceUrl: url, zones };
     return cached;
   })();
 
@@ -111,14 +112,50 @@ function loadImage(url) {
   });
 }
 
-// POA normalized coords (0..1 of silhouette bbox). Values chosen empirically
-// to hit anatomical landmarks on a standing frontal human figure.
-export const POA_PRESETS = {
-  head:    { x: 0.50, y: 0.08 },
-  chest:   { x: 0.50, y: 0.22 },
-  abdomen: { x: 0.50, y: 0.38 },
-  leg:     { x: 0.50, y: 0.72 },
+// Called-shot zone definitions in normalized silhouette coords. Each zone is
+// an ellipse (cx, cy, rx, ry as fractions of bbox). A pixel is "in zone" iff
+// it's both inside the body mask AND inside the ellipse — so the mask is
+// anatomically constrained to the actual figure.
+//
+// Chest is intentionally absent: "Chest (center mass)" means any body hit,
+// so the target is the full silhouette and there's no zone restriction.
+export const ZONE_DEFS = {
+  head:    { cx: 0.50, cy: 0.07, rx: 0.09, ry: 0.07 },
+  abdomen: { cx: 0.50, cy: 0.38, rx: 0.12, ry: 0.10 },
+  leg:     { cx: 0.42, cy: 0.72, rx: 0.07, ry: 0.18 },
 };
+
+// POA normalized coords. Zoned presets aim at the zone's centroid; chest
+// keeps its empirical center-mass aim point and uses the whole body as target.
+export const POA_PRESETS = {
+  head:    { x: ZONE_DEFS.head.cx,    y: ZONE_DEFS.head.cy },
+  chest:   { x: 0.50, y: 0.22 },
+  abdomen: { x: ZONE_DEFS.abdomen.cx, y: ZONE_DEFS.abdomen.cy },
+  leg:     { x: ZONE_DEFS.leg.cx,     y: ZONE_DEFS.leg.cy },
+};
+
+function buildZoneMasks(bodyMask, w, h) {
+  const out = {};
+  for (const [id, def] of Object.entries(ZONE_DEFS)) {
+    const cx = def.cx * w;
+    const cy = def.cy * h;
+    const rx = def.rx * w;
+    const ry = def.ry * h;
+    const zmask = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const ddx = (x - cx) / rx;
+        const ddy = (y - cy) / ry;
+        if (ddx * ddx + ddy * ddy <= 1) {
+          const i = y * w + x;
+          if (bodyMask[i]) zmask[i] = 1;
+        }
+      }
+    }
+    out[id] = zmask;
+  }
+  return out;
+}
 
 function inchesPerPx(silh, figureHeightIn) {
   return figureHeightIn / silh.height;
@@ -138,9 +175,10 @@ function moaToPxFactors(silh, figureHeightIn, widthScale, distanceYd) {
 }
 
 // params: { figureHeightIn, widthScale, distanceYd, dispersionMoa, poaNorm: {x,y} }
-// Monte Carlo hit probability — uses the deterministic unit-normal pool, so
-// output is a smooth function of inputs.
-export function monteCarloRF(silh, params) {
+// Monte Carlo hit probability against a target mask (defaults to the body
+// silhouette; pass a zone mask for called-shot probabilities). Uses the
+// deterministic unit-normal pool, so output is a smooth function of inputs.
+export function monteCarloRF(silh, params, targetMask = null) {
   if (!silh) return 0;
   const { figureHeightIn, widthScale, distanceYd, dispersionMoa, poaNorm } = params;
   if (!(dispersionMoa > 0) || !(distanceYd > 0) || !(figureHeightIn > 0)) return 0;
@@ -149,7 +187,8 @@ export function monteCarloRF(silh, params) {
   const sigmaPxX = dispersionMoa * pxPerMoaX;
   const sigmaPxY = dispersionMoa * pxPerMoaY;
 
-  const w = silh.width, h = silh.height, mask = silh.mask;
+  const w = silh.width, h = silh.height;
+  const mask = targetMask || silh.mask;
   const poaPxX = poaNorm.x * w;
   const poaPxY = poaNorm.y * h;
 
@@ -165,35 +204,37 @@ export function monteCarloRF(silh, params) {
 }
 
 // Samples an impact whose visual position matches the HIT/MISS verdict from
-// the d100 roll. Rejection-samples until the geometric verdict on the mask
-// agrees with wantHit, then falls back to the nearest matching pixel if the
-// loop exhausts (rare: skill/dispersion combos where the visual probability
-// is near 0% or 100% but the dice went the other way).
-export function sampleImpactForOutcome(silh, params, tightness, wantHit, rng = Math.random, maxTries = 500) {
+// the d100 roll. Rejection-samples until the impact's onZone classification
+// agrees with wantHit. With a zoneMask, "hit" means landed in the zone (a
+// missed-zone shot may still be onBody). Without one, zone === body, so the
+// classification is the same as the original body-only behavior.
+export function sampleImpactForOutcome(silh, params, tightness, wantHit, zoneMask = null, rng = Math.random, maxTries = 500) {
   let last = null;
   for (let i = 0; i < maxTries; i++) {
-    const impact = sampleOneImpact(silh, params, tightness, rng);
+    const impact = sampleOneImpact(silh, params, tightness, rng, zoneMask);
     last = impact;
-    if (impact.hit === wantHit) return impact;
+    if (impact.onZone === wantHit) return impact;
   }
   if (!last) return null;
-  const nearest = findNearestPixel(silh, last.xPx, last.yPx, wantHit);
+  const target = zoneMask || silh.mask;
+  const nearest = findNearestPixel(silh, last.xPx, last.yPx, wantHit, target);
   if (!nearest) return last;
-  return reprojectImpact(silh, params, nearest.x, nearest.y);
+  return reprojectImpact(silh, params, nearest.x, nearest.y, zoneMask);
 }
 
-// Spiral search for the nearest pixel whose hit-status matches wantHit.
-// Out-of-bounds pixels count as off-body (a natural "miss").
-function findNearestPixel(silh, cx, cy, wantHit, maxRadius) {
-  const { mask, width: w, height: h } = silh;
+// Spiral search for the nearest pixel whose target-mask status matches
+// wantHit. Out-of-bounds pixels count as off-target (a natural "miss").
+function findNearestPixel(silh, cx, cy, wantHit, targetMask = null, maxRadius) {
+  const { width: w, height: h } = silh;
+  const target = targetMask || silh.mask;
   const startX = Math.max(0, Math.min(w - 1, cx | 0));
   const startY = Math.max(0, Math.min(h - 1, cy | 0));
   const limit = maxRadius ?? Math.max(w, h);
 
   const check = (x, y) => {
     const oob = x < 0 || y < 0 || x >= w || y >= h;
-    const onBody = !oob && mask[y * w + x] === 1;
-    return wantHit ? onBody : !onBody;
+    const inTarget = !oob && target[y * w + x] === 1;
+    return wantHit ? inTarget : !inTarget;
   };
 
   if (check(startX, startY)) return { x: startX, y: startY };
@@ -212,7 +253,7 @@ function findNearestPixel(silh, cx, cy, wantHit, maxRadius) {
 
 // Given an explicit pixel position, reverse-map through the mask geometry to
 // MOA/inch deviations so the readout stays consistent with the plotted dot.
-function reprojectImpact(silh, params, xPx, yPx) {
+function reprojectImpact(silh, params, xPx, yPx, zoneMask = null) {
   const { figureHeightIn, widthScale, distanceYd, poaNorm } = params;
   const { pxPerMoaX, pxPerMoaY } = moaToPxFactors(silh, figureHeightIn, widthScale, distanceYd);
   const poaPxX = poaNorm.x * silh.width;
@@ -220,20 +261,23 @@ function reprojectImpact(silh, params, xPx, yPx) {
   const xMoa = (xPx - poaPxX) / pxPerMoaX;
   const yMoa = (yPx - poaPxY) / pxPerMoaY;
   const ix = xPx | 0, iy = yPx | 0;
-  const hit = ix >= 0 && iy >= 0 && ix < silh.width && iy < silh.height
-              && silh.mask[iy * silh.width + ix] === 1;
+  const inBounds = ix >= 0 && iy >= 0 && ix < silh.width && iy < silh.height;
+  const idx = inBounds ? iy * silh.width + ix : -1;
+  const onBody = inBounds && silh.mask[idx] === 1;
+  const onZone = zoneMask ? (inBounds && zoneMask[idx] === 1) : onBody;
   return {
     xMoa, yMoa,
     xIn: xMoa * distanceYd / 95.5,
     yIn: yMoa * distanceYd / 95.5,
-    xPx, yPx, hit,
+    xPx, yPx, onBody, onZone,
   };
 }
 
 // Samples one impact from the standard-normal pool with optional tightness
 // (σ multiplier tied to shot type). Returns impact in pixel-space of the
-// silhouette mask plus the MOA/inch deviations for display.
-export function sampleOneImpact(silh, params, tightness = 1.0, rng = Math.random) {
+// silhouette mask plus MOA/inch deviations and onBody/onZone classifications
+// (onZone == onBody when zoneMask is null — center-mass aiming).
+export function sampleOneImpact(silh, params, tightness = 1.0, rng = Math.random, zoneMask = null) {
   const { figureHeightIn, widthScale, distanceYd, dispersionMoa, poaNorm } = params;
   const { pxPerMoaX, pxPerMoaY } = moaToPxFactors(silh, figureHeightIn, widthScale, distanceYd);
 
@@ -256,8 +300,10 @@ export function sampleOneImpact(silh, params, tightness = 1.0, rng = Math.random
   const yPx = poaPxY + yMoa * pxPerMoaY;
 
   const ix = xPx | 0, iy = yPx | 0;
-  const hit = ix >= 0 && iy >= 0 && ix < silh.width && iy < silh.height
-              && silh.mask[iy * silh.width + ix] === 1;
+  const inBounds = ix >= 0 && iy >= 0 && ix < silh.width && iy < silh.height;
+  const idx = inBounds ? iy * silh.width + ix : -1;
+  const onBody = inBounds && silh.mask[idx] === 1;
+  const onZone = zoneMask ? (inBounds && zoneMask[idx] === 1) : onBody;
 
-  return { xMoa, yMoa, xIn, yIn, xPx, yPx, hit };
+  return { xMoa, yMoa, xIn, yIn, xPx, yPx, onBody, onZone };
 }
