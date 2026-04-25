@@ -1,5 +1,10 @@
 // Minimal offline cache for the app shell.
-const CACHE_VERSION = "ballistics-v3";
+//
+// Strategy: network-first with cache fallback. Online loads always see fresh
+// code (no need to bump CACHE_VERSION on shell changes); offline loads serve
+// whatever was last cached. The precache below just seeds the cache so a
+// first-time-offline visit still works.
+const CACHE_VERSION = "ballistics-v5";
 const SHELL = [
   "./",
   "./index.html",
@@ -13,7 +18,7 @@ const SHELL = [
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
-  "./assets/06wi_yzok_190916.jpg",
+  "./assets/silhouette_transparent_packground.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -37,16 +42,12 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
 
   event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req).then((res) => {
-        // Opportunistically cache successful same-origin responses
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put(req, copy));
-        }
-        return res;
-      }).catch(() => cached);
-    })
+    fetch(req).then((res) => {
+      if (res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE_VERSION).then((cache) => cache.put(req, copy));
+      }
+      return res;
+    }).catch(() => caches.match(req))
   );
 });

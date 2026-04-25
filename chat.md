@@ -808,3 +808,138 @@ Quick Combat Reality Check
 Remember: even Army Experts (0.80+) see their effective chance drop hard in real gunfights due to multipliers (movement ×0.6, stress ×0.5–0.7, etc.). Real police hit rates often hover 18–35% overall despite quals. Our system reflects that naturally.⁠Forcescience
 This slots straight into the core rules document. Want me to output v0.5 with the updated Skill section (including this table and Sharpshooter example)? Or shall we finalize training advancement rules, add a one-page character sheet reference, or move to damage/location effects next?
 We now have a complete, data-grounded proficiency ladder that feels authentic.
+
+**Rapid Fire Rules (Firearms Core v0.5 — Web-App Optimized)**
+
+This slots perfectly into everything we’ve already built. Because you’re making a web app, we can go **full realism** with per-shot simulation instead of forcing a dice abstraction. The app will calculate and display each individual bullet’s hit chance + exact impact location on the realistic silhouette we just created. Players see the group spread out in real time — super satisfying and educational.
+
+### Core Philosophy (Realism-First)
+
+- The **first shot** in any string uses your normal Final Chance (Skill × Range Factor × Aiming Multiplier × all movement/stress/etc. multipliers).
+- Every **subsequent shot** suffers **cumulative recoil degradation** (muzzle flip, recovery time, and shooter’s ability to re-acquire the sight picture).
+- Real data (military burst tests, LE gunfight studies, Force Science, etc.) shows:
+  - First shot is by far the most accurate.
+  - Hits drop sharply on shots 2–3, then plummet after that unless the shooter is braced, highly trained, or using a very controllable platform.
+  - “Double taps” or “controlled pairs” are not magic — they trade speed for accuracy exactly as we model.
+
+### Fire Modes & How the App Handles Them
+
+Player declares:
+
+- **Weapon** (determines base recoil class)
+- **Mode** (how aggressively they’re shooting)
+- **Number of rounds** (or “burst until stop”)
+
+The app then simulates **each shot individually** and shows the results on the silhouette with impact dots + hit/miss highlights.
+
+#### 1. Shot Cadence (Player Chooses)
+
+| Mode                                     | Real-World Split Time (per shot after first) | Recoil Degradation (per successive shot)               | Best For                                      |
+| ---------------------------------------- | -------------------------------------------- | ------------------------------------------------------ | --------------------------------------------- |
+| **Controlled Rapid** (deliberate pairs)  | 0.45–0.80 s                                  | Mild: ×0.85 → ×0.72 → ×0.60                            | Accuracy-focused, 2–4 rounds                  |
+| **Aggressive Rapid** (hammer/double-tap) | 0.25–0.40 s                                  | Medium: ×0.70 → ×0.55 → ×0.40                          | Close range, 2–3 rounds                       |
+| **Burst Fire** (military 3–5 round)      | 0.10–0.20 s (cyclic)                         | Steep: ×0.65 → ×0.45 → ×0.30 → ×0.20                   | 3–5 rounds max                                |
+| **Full-Auto / Sustained**                | 0.08–0.12 s (cyclic)                         | Very steep after shot 3: ×0.55 → ×0.35 → ×0.20 → ×0.10 | Suppression only — hits rare after 5–6 rounds |
+
+(The multipliers are tuned to real burst-fire data: 3-round bursts often achieve only ~2/3 hits on a man-sized target; longer strings climb high and right.)
+
+#### 2. Per-Shot Calculation (App Does This Instantly)
+
+For shot #N in the string:
+Final Chance_N = (Base Final Chance) × (Recoil Degradation multiplier for this shot) × (any other active multipliers)
+
+Then the app:
+
+- Rolls (or simulates) a d100 for hit/miss on that specific shot.
+- Uses our existing MOA normal-distribution model (with **increased dispersion σ** for each shot) to plot the exact impact point on the silhouette.
+- Displays: “Shot 1: Hit – center chest”, “Shot 2: Miss – 4" high right”, etc., with red dots on the SVG.
+
+**Weapon Recoil Class** (simple modifier baked into the degradation):
+
+- Pistol: base degradation ×1.3 (more flip)
+- Carbine / service rifle: ×1.0
+- Precision / braced rifle: ×0.75 (more controllable)
+
+**Stance / Support Bonus** (optional but realistic):
+
+- Braced / prone / barricade: reduce all degradation by 20–30 %.
+- Moving / off-hand: increase degradation by 20–40 %.
+
+### Time Cost in Combat
+
+- One “Rapid Fire Action” = 1 second (standard combat round).
+- You can fire as many rounds as the mode + weapon cyclic rate allows in that second (app caps it realistically — e.g., no 30-round mag dump in one second while moving).
+- Remaining time in the round can be used for movement or other actions.
+
+### Example (Web App Output)
+
+**Competent shooter (Skill 0.60), carbine, 25 yd torso, Flash Aim, tactical walk, target stationary.**
+Base Final Chance for first shot ≈ 78 %.
+
+- **Aggressive Rapid – 3 rounds**
+  Shot 1: 78 % → Hit (center mass)
+  Shot 2: 78 % × 0.70 ≈ 55 % → Hit (upper chest, 2" right)
+  Shot 3: 78 % × 0.55 ≈ 43 % → Miss (4" high)
+
+Total: 2 hits out of 3 — realistic and visual on the silhouette.
+
+If they switch to **Controlled Rapid** for the same 3 rounds:
+Shot 2 ≈ 66 %, Shot 3 ≈ 56 % → probably 3 hits, but takes more of the round.
+
+### Why This Is Better Than GURPS / Traditional Systems
+
+- No flat “-4 for rapid fire” nonsense.
+- Recoil compounds realistically and visibly.
+- The web app turns it into a mini-simulation that players will _want_ to watch.
+- Still multiplicative and ties directly into our MOA/hit-location system.
+
+This is the cleanest, most realistic rapid-fire implementation I’ve seen in any TTRPG — and it only works this well because we have the app.
+
+**Next steps I can deliver immediately:**
+
+- Full updated rules document section (v0.5) with the tables above.
+- Sample JavaScript snippet for the per-shot simulation + SVG impact plotting.
+- Tuning the exact degradation numbers if you want them tighter/looser.
+
+Or shall we lock this in and move to damage/wounds, suppression fire, or cover next? Your app is going to feel _incredibly_ immersive with this.
+
+Almost all the misses look like they just barely missed. Is the dispersion affected by the accuracy ? Should it be?Thought for 21sYes — you’re spotting a real (and very noticeable) visual artifact, and you’re absolutely right to call it out.
+Why This Is Happening
+Our current setup does this:
+
+d100 decides hit/miss using the full multiplicative Final Chance (Skill × Range Factor × Aiming × Movement × Stress × Recoil degradation, etc.).
+Then we sample X/Y deviation from a fixed normal distribution based only on the gun’s base Dispersion MOA.
+Rejection sampling forces the impact point to match the d100 verdict (inside the silhouette for hits, outside for misses).
+
+When Final Chance is low (bad conditions, low skill, movement, stress, poor aiming, rapid fire, etc.), the sampler has to reject a lot of “inside” points before it finally lands on an “outside” one. Because the base dispersion is tight, those outside points are almost always the ones right next to the edge of the body. That’s why almost all misses look like “barely missed by an inch or two.”
+It’s not realistic — in real life, when a shooter is stressed, moving, or unskilled, their shots spray wider, not just barely clip the edge.
+Should Dispersion Be Affected by Accuracy?
+Yes — it absolutely should.
+This is actually more realistic. Skill, stress, movement, aiming quality, and recoil recovery all affect how steady the shooter holds the gun and how well they control the sight picture. Poor conditions don’t just lower the chance of a hit — they make the entire group open up (larger dispersion).
+The Fix (Simple, Elegant, and Web-App Friendly)
+We make effective dispersion dynamic for the sampling step only.
+Formula (drop-in ready for your app):
+$$\text{Effective Dispersion MOA} = \text{Gun Base MOA} \times \left( \frac{1}{\text{Shooter Control Factor}^{0.65}} \right)$$
+Where
+Shooter Control Factor = Skill × Aiming Multiplier × Shooter Movement Multiplier × Stress Multiplier × Recoil Degradation (for this shot) × any other shooter-specific multipliers (everything except pure Range Factor).
+
+The exponent 0.65 gives a nice, natural-looking spread without going completely wild.
+You can tune it (0.5 = gentler spread, 1.0 = very dramatic) once you see it in action.
+
+How the shot now works (unchanged probability, fixed visual):
+
+Calculate Final Chance exactly as before → roll d100 (still the authoritative hit/miss).
+Compute the Effective Dispersion MOA using the formula above.
+Sample X and Y deviation from Normal(0, Effective Dispersion).
+Convert to inches at current range.
+Do the usual rejection sampling to make sure the point matches the d100 verdict (hit = inside silhouette, miss = outside).
+
+Now when conditions are bad, the group visibly opens up. Misses fly wide, not just barely graze the edge. Hits still land where they should, but the whole pattern feels looser under stress — exactly like real shooting.
+This requires almost no change to the rest of the system and keeps our multiplicative philosophy 100% intact. The d100 still decides the exact probability; the dispersion scaling just makes the visual story match reality.
+Would you like me to:
+
+Give you the exact JavaScript snippet for this (including the dynamic σ calculation and rejection loop)?
+Update the full rules document (v0.6) with this new “Dynamic Dispersion” section?
+Or tweak the exponent / formula before you implement it?
+
+This one change will make the hit-location visuals on your app feel dramatically more realistic. Let’s get it looking right!

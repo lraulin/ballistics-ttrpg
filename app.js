@@ -11,10 +11,18 @@ import {
     thetaMoa,
     ydToDisplay,
 } from "./calc.js";
-import { rollD100, tightnessForShotType } from "./dice.js";
+import {
+    FIRE_MODE_LABELS,
+    FIRE_MODE_RANGES,
+    recoilMultiplier,
+    rollD100,
+    sigmaScaleForRecoil,
+    tightnessForShotType,
+} from "./dice.js";
 import {
     addCustomWeapon, findWeapon,
-    getAllWeapons
+    getAllWeapons,
+    modesForWeapon,
 } from "./presets.js";
 import {
     getSilhouette,
@@ -82,6 +90,10 @@ const els = {
   otherMultipliers: $("#other-multipliers"),
   addOther: $("#add-other"),
 
+  fireMode: $("#fire-mode"),
+  roundCount: $("#round-count"),
+  fireModeReadout: $("#fire-mode-readout"),
+
   finalPct: $("#final-pct"),
   breakdown: $("#breakdown"),
   rollBtn: $("#roll-btn"),
@@ -100,6 +112,8 @@ const defaultState = {
   widthScale: 1.0,       // multiplier on figure width from image aspect
   poaPreset: "chest",
   shotType: "flash",
+  fireMode: "single",
+  roundCount: 1,
   aimWithin: 0.5,
   shooterMove: 1.0,
   targetSpeed: 0,
@@ -242,6 +256,31 @@ function escapeHtml(s) {
   }[c]));
 }
 
+function renderFireModeOptions(weapon) {
+  const allowed = modesForWeapon(weapon);
+  const current = els.fireMode.value;
+  els.fireMode.innerHTML = "";
+  for (const m of allowed) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = FIRE_MODE_LABELS[m];
+    els.fireMode.appendChild(opt);
+  }
+  // If the previously-selected mode isn't allowed on this weapon, fall back
+  // and reset round count to the new mode's default. Otherwise leave both alone.
+  if (!allowed.includes(state.fireMode)) {
+    state.fireMode = allowed[0];
+    state.roundCount = FIRE_MODE_RANGES[state.fireMode].default;
+  } else if (current !== state.fireMode) {
+    els.fireMode.value = state.fireMode;
+  }
+}
+
+function clampRoundsToMode(mode, n) {
+  const r = FIRE_MODE_RANGES[mode] || FIRE_MODE_RANGES.single;
+  return Math.max(r.min, Math.min(r.max, n | 0));
+}
+
 function renderPoaMarker() {
   const poa = POA_PRESETS[state.poaPreset] || POA_PRESETS.chest;
   const xPct = poa.x * 100;
@@ -295,6 +334,15 @@ function render() {
   for (const r of document.querySelectorAll('input[name="shot"]')) {
     r.checked = (r.value === state.shotType);
   }
+
+  renderFireModeOptions(d.weapon);
+  els.fireMode.value = state.fireMode;
+  const range = FIRE_MODE_RANGES[state.fireMode] || FIRE_MODE_RANGES.single;
+  els.roundCount.min = range.min;
+  els.roundCount.max = range.max;
+  els.roundCount.value = state.roundCount;
+  els.roundCount.disabled = range.min === range.max;
+  els.fireModeReadout.textContent = describeFireMode(state.fireMode, state.roundCount, d.weapon);
 
   renderPoaMarker();
 
@@ -424,6 +472,18 @@ function wire() {
     });
   }
 
+  els.fireMode.addEventListener("change", () => {
+    state.fireMode = els.fireMode.value;
+    state.roundCount = clampRoundsToMode(state.fireMode, state.roundCount || FIRE_MODE_RANGES[state.fireMode].default);
+    persist(); render();
+  });
+
+  els.roundCount.addEventListener("input", () => {
+    const n = parseInt(els.roundCount.value, 10);
+    state.roundCount = clampRoundsToMode(state.fireMode, isFinite(n) ? n : FIRE_MODE_RANGES[state.fireMode].default);
+    persist(); render();
+  });
+
   els.aimSlider.addEventListener("input", () => {
     state.aimWithin = readNumber(els.aimSlider, 0.5);
     persist(); render();
@@ -484,61 +544,99 @@ function clearImpacts() {
   els.impactLast.classList.remove("miss");
 }
 
+function describeFireMode(mode, rounds, weapon) {
+  if (mode === "single") return "Single shot — full Final Chance.";
+  const cls = weapon?.recoilClass ?? 1.0;
+  const sample = [];
+  for (let i = 0; i < Math.min(rounds, 5); i++) {
+    sample.push(`×${recoilMultiplier(mode, i, cls).toFixed(2)}`);
+  }
+  return `${FIRE_MODE_LABELS[mode]}, ${rounds} rd · per-shot FC: ${sample.join(" → ")}${rounds > 5 ? " …" : ""}`;
+}
+
 function doRoll() {
   const silh = getSilhouette();
   if (!silh) return;
-  const { fc, dispersion } = compute();
-  const roll = rollD100();
-  const pct = Math.round(fc * 100);
-  const hit = roll <= pct;
-  const margin = Math.abs(roll - pct);
-  els.rollResult.textContent = `d100 = ${roll} vs ${pct}% → ${hit ? "HIT" : "MISS"} (by ${margin})`;
-  els.rollResult.className = `roll-result ${hit ? "hit" : "miss"}`;
-
+  const { fc, dispersion, weapon } = compute();
   const tightness = tightnessForShotType(state.shotType);
-  const impact = sampleImpactForOutcome(silh, {
-    figureHeightIn: state.figureHeight,
-    widthScale: state.widthScale,
-    distanceYd: state.distance,
-    dispersionMoa: dispersion,
-    poaNorm: POA_PRESETS[state.poaPreset] || POA_PRESETS.chest,
-  }, tightness, hit);
+  const recoilCls = weapon?.recoilClass ?? 1.0;
+  const rounds = state.fireMode === "single" ? 1 : Math.max(1, state.roundCount);
 
-  plotImpact(impact, hit);
+  clearImpacts();
 
+  const lines = [];
+  let hits = 0;
+  let lastHit = false;
+
+  for (let i = 0; i < rounds; i++) {
+    const recoil = recoilMultiplier(state.fireMode, i, recoilCls);
+    const sigmaScale = sigmaScaleForRecoil(recoil);
+    const shotFc = clamp(fc * recoil);
+    const pct = Math.round(shotFc * 100);
+    const roll = rollD100();
+    const hit = roll <= pct;
+    if (hit) hits++;
+    lastHit = hit;
+
+    const impact = sampleImpactForOutcome(silh, {
+      figureHeightIn: state.figureHeight,
+      widthScale: state.widthScale,
+      distanceYd: state.distance,
+      dispersionMoa: dispersion,
+      poaNorm: POA_PRESETS[state.poaPreset] || POA_PRESETS.chest,
+    }, tightness * sigmaScale, hit);
+
+    plotShot(impact, hit, i === rounds - 1);
+    lines.push(formatShotLine(i + 1, hit, roll, pct, impact));
+  }
+
+  if (rounds === 1) {
+    const pct = Math.round(fc * 100);
+    els.rollResult.textContent = `d100 vs ${pct}% → ${lastHit ? "HIT" : "MISS"}`;
+    els.rollResult.className = `roll-result ${lastHit ? "hit" : "miss"}`;
+    els.impactReadout.textContent = lines[0];
+  } else {
+    const cls = hits === 0 ? "miss" : (hits === rounds ? "hit" : "");
+    els.rollResult.textContent =
+      `${rounds}-rd ${FIRE_MODE_LABELS[state.fireMode]}: ${hits}/${rounds} hit${hits === 1 ? "" : "s"}`;
+    els.rollResult.className = `roll-result ${cls}`;
+    els.impactReadout.innerHTML = lines.map(l =>
+      `<span class="shot-line">${escapeHtml(l)}</span>`
+    ).join("");
+  }
+}
+
+function formatShotLine(n, hit, roll, pct, impact) {
   const sizeUnit = state.unitSystem === "metric" ? "cm" : "in";
   const xDisp = inToDisplay(impact.xIn, state.unitSystem);
   const yDisp = inToDisplay(impact.yIn, state.unitSystem);
-  const geomNote = impact.hit ? "silhouette hit" : "silhouette miss";
-  els.impactReadout.textContent =
-    `Impact: ${impact.xMoa >= 0 ? "R" : "L"} ${Math.abs(impact.xMoa).toFixed(1)} MOA ` +
-    `(${Math.abs(xDisp).toFixed(1)} ${sizeUnit}) · ` +
-    `${impact.yMoa >= 0 ? "low" : "high"} ${Math.abs(impact.yMoa).toFixed(1)} MOA ` +
-    `(${Math.abs(yDisp).toFixed(1)} ${sizeUnit}) · ${geomNote}`;
+  return (
+    `Shot ${n}: ${hit ? "HIT" : "MISS"} (d100=${roll} vs ${pct}%) · ` +
+    `${impact.xMoa >= 0 ? "R" : "L"} ${Math.abs(xDisp).toFixed(1)} ${sizeUnit}, ` +
+    `${impact.yMoa >= 0 ? "low" : "high"} ${Math.abs(yDisp).toFixed(1)} ${sizeUnit}`
+  );
 }
 
-function plotImpact(impact, diceHit) {
+function plotShot(impact, isHit, isLatest) {
   const silh = getSilhouette();
   if (!silh) return;
   const xPct = (impact.xPx / silh.width) * 100;
   const yPct = (impact.yPx / silh.height) * 100;
 
-  // Demote the previous "last" dot into persistent history.
-  const prev = els.impactLast;
-  if (+prev.getAttribute("r") > 0) {
-    const keep = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    keep.setAttribute("cx", prev.getAttribute("cx"));
-    keep.setAttribute("cy", prev.getAttribute("cy"));
-    keep.setAttribute("r", "0.8");
-    els.impactDots.appendChild(keep);
-    while (els.impactDots.childElementCount > 20) {
-      els.impactDots.removeChild(els.impactDots.firstChild);
-    }
+  if (isLatest) {
+    const last = els.impactLast;
+    last.setAttribute("cx", xPct.toFixed(2));
+    last.setAttribute("cy", yPct.toFixed(2));
+    last.setAttribute("r", "1.4");
+    last.classList.toggle("miss", !isHit);
+  } else {
+    const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    dot.setAttribute("cx", xPct.toFixed(2));
+    dot.setAttribute("cy", yPct.toFixed(2));
+    dot.setAttribute("r", "1.0");
+    if (!isHit) dot.classList.add("miss");
+    els.impactDots.appendChild(dot);
   }
-  prev.setAttribute("cx", xPct.toFixed(2));
-  prev.setAttribute("cy", yPct.toFixed(2));
-  prev.setAttribute("r", "1.4");
-  prev.classList.toggle("miss", !diceHit);
 }
 
 // ---- Init ----

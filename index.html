@@ -149,6 +149,27 @@
     </section>
 
     <section class="card">
+      <h2>Fire mode</h2>
+      <div class="field-grid">
+        <label class="field">
+          <span class="field-label">Cadence</span>
+          <select id="fire-mode">
+            <option value="single">Single shot</option>
+            <option value="controlled">Controlled rapid (pairs)</option>
+            <option value="aggressive">Aggressive rapid (double-tap)</option>
+            <option value="burst">Burst (3–5 rd)</option>
+            <option value="fullauto">Full auto / sustained</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Rounds</span>
+          <input type="number" id="round-count" min="1" max="20" step="1" value="1">
+        </label>
+      </div>
+      <p class="readout" id="fire-mode-readout">Single shot — full Final Chance.</p>
+    </section>
+
+    <section class="card">
       <h2>Shooter movement</h2>
       <label class="field">
         <select id="shooter-move">
