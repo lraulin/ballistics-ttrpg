@@ -16,7 +16,6 @@ import {
     FIRE_MODE_RANGES,
     recoilMultiplier,
     rollD100,
-    sigmaScaleForRecoil,
     tightnessForShotType,
 } from "./dice.js";
 import {
@@ -180,12 +179,18 @@ function compute() {
   const advMults = Object.values(state.adv);
   const otherMults = state.others.map(o => o.value);
 
-  const fc = finalChance(state.skill, [
-    rf, aim, state.shooterMove, tmm, state.platform,
-    ...advMults, ...otherMults,
-  ]);
+  // Shooter-control product (everything except RF). Drives both Final Chance
+  // and dynamic dispersion: when control drops, σ widens so misses fly wide
+  // instead of clipping the silhouette edge.
+  const controlMults = [aim, state.shooterMove, tmm, state.platform, ...advMults, ...otherMults];
+  let control = state.skill;
+  for (const m of controlMults) {
+    if (typeof m === "number" && isFinite(m) && m > 0) control *= m;
+  }
 
-  return { weapon, dispersion, theta, rf, aim, av, tmm, fc };
+  const fc = finalChance(state.skill, [rf, ...controlMults]);
+
+  return { weapon, dispersion, theta, rf, aim, av, tmm, fc, control };
 }
 
 // ---- Rendering ----
@@ -557,7 +562,7 @@ function describeFireMode(mode, rounds, weapon) {
 function doRoll() {
   const silh = getSilhouette();
   if (!silh) return;
-  const { fc, dispersion, weapon } = compute();
+  const { fc, dispersion, weapon, control } = compute();
   const tightness = tightnessForShotType(state.shotType);
   const recoilCls = weapon?.recoilClass ?? 1.0;
   const rounds = state.fireMode === "single" ? 1 : Math.max(1, state.roundCount);
@@ -570,7 +575,6 @@ function doRoll() {
 
   for (let i = 0; i < rounds; i++) {
     const recoil = recoilMultiplier(state.fireMode, i, recoilCls);
-    const sigmaScale = sigmaScaleForRecoil(recoil);
     const shotFc = clamp(fc * recoil);
     const pct = Math.round(shotFc * 100);
     const roll = rollD100();
@@ -578,13 +582,19 @@ function doRoll() {
     if (hit) hits++;
     lastHit = hit;
 
+    // Effective dispersion = base / control^0.65. Recoil for this shot is
+    // folded into the control product so later shots in a string both lose
+    // hit chance AND visibly spray wider.
+    const shotControl = Math.max(0.05, control * recoil);
+    const effectiveDispersion = dispersion / Math.pow(shotControl, 0.65);
+
     const impact = sampleImpactForOutcome(silh, {
       figureHeightIn: state.figureHeight,
       widthScale: state.widthScale,
       distanceYd: state.distance,
-      dispersionMoa: dispersion,
+      dispersionMoa: effectiveDispersion,
       poaNorm: POA_PRESETS[state.poaPreset] || POA_PRESETS.chest,
-    }, tightness * sigmaScale, hit);
+    }, tightness, hit);
 
     plotShot(impact, hit, i === rounds - 1);
     lines.push(formatShotLine(i + 1, hit, roll, pct, impact));

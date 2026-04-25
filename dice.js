@@ -105,9 +105,3 @@ export function recoilMultiplier(mode, shotIndex, recoilClass = 1.0) {
   const scaled = 1 - (1 - base) * recoilClass;
   return Math.max(0.05, Math.min(1.0, scaled));
 }
-
-// Visual σ widens as recoil mounts so the impact group spreads in step with
-// the falling hit chance. Capped at 2× to keep dots on-canvas.
-export function sigmaScaleForRecoil(recoilMult) {
-  return 1 + (1 - recoilMult);
-}
