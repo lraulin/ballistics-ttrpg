@@ -165,31 +165,19 @@ export function monteCarloRF(silh, params) {
 }
 
 // Samples an impact whose visual position matches the HIT/MISS verdict from
-// the d100 roll.
-//
-// MISS: return the raw sample unconditionally — the dot goes wherever the
-// normal distribution puts it, including outside the silhouette image bounds.
-// Constraining a miss to the whitespace within the tightly-cropped image would
-// force it into narrow gaps (arm/torso, etc.) that still look like body hits.
-// The container clips anything too far off-screen, which is fine.
-//
-// HIT: rejection-sample until the dot lands on the body mask. If the loop
-// exhausts (rare: e.g. a precision rifle at close range where the geometry
-// gives ~100% but heavy penalties produced a roll miss), nudge to the nearest
-// body pixel so the dot is never off the figure on a confirmed hit.
+// the d100 roll. Rejection-samples until the geometric verdict on the mask
+// agrees with wantHit, then falls back to the nearest matching pixel if the
+// loop exhausts (rare: skill/dispersion combos where the visual probability
+// is near 0% or 100% but the dice went the other way).
 export function sampleImpactForOutcome(silh, params, tightness, wantHit, rng = Math.random, maxTries = 500) {
-  // Misses: let the math decide — no geometric constraint.
-  if (!wantHit) return sampleOneImpact(silh, params, tightness, rng);
-
-  // Hits: rejection-sample until the dot is on the body.
   let last = null;
   for (let i = 0; i < maxTries; i++) {
     const impact = sampleOneImpact(silh, params, tightness, rng);
     last = impact;
-    if (impact.hit) return impact;
+    if (impact.hit === wantHit) return impact;
   }
   if (!last) return null;
-  const nearest = findNearestPixel(silh, last.xPx, last.yPx, true);
+  const nearest = findNearestPixel(silh, last.xPx, last.yPx, wantHit);
   if (!nearest) return last;
   return reprojectImpact(silh, params, nearest.x, nearest.y);
 }
